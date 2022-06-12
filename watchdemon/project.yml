@@ -1,0 +1,31 @@
+environment: { }
+parameters: { }
+packages:
+  - name: watchdemon
+    environment: { }
+    parameters: { }
+    actions:
+      - name: authenticate
+        main: ''
+        runtime: 'go:default'
+        environment:
+          WATCHDEMON_AUTHORIZED: '${WATCHDEMON_AUTHORIZED}'
+          WATCHDEMON_SPACE_ENDPOINT: '${WATCHDEMON_SPACE_ENDPOINT}'
+          WATCHDEMON_SPACE_NAME: '${WATCHDEMON_SPACE_NAME}'
+          WATCHDEMON_SPACE_REGION: '${WATCHDEMON_SPACE_REGION}'
+          WATCHDEMON_ACCESS_KEY: '${WATCHDEMON_ACCESS_KEY}'
+          WATCHDEMON_SECRET_KEY: '${WATCHDEMON_SECRET_KEY}'
+        parameters: { }
+        limits:
+          timeout: 5000
+          memory: 128
+          logs: 1
+      - name: generate
+        main: ''
+        runtime: 'go:default'
+        environment: { }
+        parameters: { }
+        limits:
+          timeout: 100
+          memory: 128
+          logs: 1

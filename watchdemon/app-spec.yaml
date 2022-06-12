@@ -1,0 +1,14 @@
+name: watchdemon
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+functions:
+  - name: watchdemon-api
+    github:
+      repo: celskeggs/nightmarket
+      branch: main
+      deploy_on_push: true
+    source_dir: /watchdemon/
+    routes:
+      - path: /watchdemon
+region: sfo3
