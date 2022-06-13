@@ -21,20 +21,42 @@ import (
 )
 
 const MergeDevice = "latest"
+const BranchPrefix = "refs/heads/"
+const SpecialAnnexPrefix = "synced/"
+const SpecialAnnexPath = "synced/git-annex"
 const Version = 1
 
 func DecodePseudoRef(ref string) (device, branch string, err error) {
-	parts := strings.SplitN(ref, "/", 4)
 	if err := gitremote.PartiallyValidateRefName(ref); err != nil {
 		return "", "", err
 	}
-	if len(parts) != 4 || parts[0] != "refs" || parts[1] != "heads" {
+	if !strings.HasPrefix(ref, BranchPrefix) {
 		return "", "", fmt.Errorf("invalid remote ref: %q", ref)
 	}
-	return parts[2], parts[3], nil
+	ref = ref[len(BranchPrefix):]
+	if ref == SpecialAnnexPath {
+		return MergeDevice, SpecialAnnexPath, nil
+	} else if strings.HasPrefix(ref, SpecialAnnexPrefix) {
+		ref = ref[len(SpecialAnnexPrefix):]
+		parts := strings.SplitN(ref, "/", 2)
+		if len(parts) != 2 {
+			return "", "", fmt.Errorf("invalid remote ref: %q", ref)
+		}
+		// basically, transpose "synced/latest/main" into "latest/synced/main"
+		return parts[0], SpecialAnnexPrefix + parts[1], nil
+	} else {
+		parts := strings.SplitN(ref, "/", 2)
+		if len(parts) != 2 {
+			return "", "", fmt.Errorf("invalid remote ref: %q", ref)
+		}
+		return parts[0], parts[1], nil
+	}
 }
 
 func EncodePseudoRef(device, branch string) (string, error) {
+	if device == MergeDevice && branch == SpecialAnnexPath {
+		return BranchPrefix + SpecialAnnexPath, nil
+	}
 	if err := gitremote.PartiallyValidateRefName(device); err != nil {
 		return "", err
 	}
@@ -44,7 +66,11 @@ func EncodePseudoRef(device, branch string) (string, error) {
 	if strings.Contains(device, "/") {
 		return "", fmt.Errorf("invalid device name: %q", device)
 	}
-	return "refs/heads/" + device + "/" + branch, nil
+	if strings.HasPrefix(branch, SpecialAnnexPrefix) {
+		branch = branch[len(SpecialAnnexPrefix):]
+		return BranchPrefix + SpecialAnnexPrefix + device + "/" + branch, nil
+	}
+	return BranchPrefix + device + "/" + branch, nil
 }
 
 func DecodeInfix(infix string) (deviceIndex, globalIndex uint64, err error) {
@@ -590,7 +616,8 @@ func (n *NightmarketHelper) preparePush(deviceName string, refs []gitremote.Push
 			// otherwise we may not detect a force-push when there is a conflict and the latest/ branch was disputed
 			// and not surfaced to Git
 		} else if device != deviceName {
-			return nil, "", fmt.Errorf("attempt to push to branch %q from device %q", ref.Dest, deviceName)
+			return nil, "", fmt.Errorf("attempt to push to branch %q (%q %q) from device %q",
+				ref.Dest, device, branch, deviceName)
 		}
 		commitHash, err := n.gitRevParse(ref.Source)
 		if err != nil {
