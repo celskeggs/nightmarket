@@ -1,3 +1,3 @@
 # nightmarket
 
-Asynchronous git repository synchronization for mutually distrusting devices
+Asynchronous encrypted git repository synchronization for mutually distrusting devices

@@ -1,13 +1,14 @@
 package gitremote
 
 import (
-	"bufio"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/celskeggs/nightmarket/lib/util"
 )
 
 type ListRef struct {
@@ -81,20 +82,6 @@ func printList(out io.StringWriter, refs []ListRef) error {
 	return err
 }
 
-func readLines(in io.Reader) func() (string, error) {
-	reader := bufio.NewReader(in)
-	return func() (string, error) {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		if len(line) == 0 || line[len(line)-1] != '\n' {
-			return "", errors.New("invalid ReadString behavior")
-		}
-		return line[:len(line)-1], nil
-	}
-}
-
 func parseFetchRef(line string) (FetchRef, error) {
 	parts := strings.Split(line, " ")
 	if len(parts) != 3 || parts[0] != "fetch" {
@@ -127,7 +114,7 @@ func parsePushRef(line string) (PushRef, error) {
 }
 
 func mainloop(in io.Reader, out io.StringWriter, helper Helper) (eo error) {
-	reader := readLines(in)
+	reader := util.ReadLines(in)
 	for {
 		line, err := reader()
 		if err != nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hashicorp/go-multierror"
 	"io"
 	"io/fs"
 	"io/ioutil"
@@ -16,8 +15,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/celskeggs/nightmarket/git-remote-nightmarket/cryptapi"
-	"github.com/celskeggs/nightmarket/git-remote-nightmarket/gitremote"
+	"github.com/celskeggs/nightmarket/lib/cryptapi"
+	"github.com/celskeggs/nightmarket/lib/gitremote"
+	"github.com/hashicorp/go-multierror"
 )
 
 const MergeDevice = "latest"
@@ -73,20 +73,25 @@ func EncodePseudoRef(device, branch string) (string, error) {
 	return BranchPrefix + device + "/" + branch, nil
 }
 
-func DecodeInfix(infix string) (deviceIndex, globalIndex uint64, err error) {
+// DecodeInfix will return valid=false if the infix indicates it's not a push (such as if it's a file stored in the
+// git-annex special remote.)
+func DecodeInfix(infix string) (valid bool, deviceIndex, globalIndex uint64, err error) {
 	parts := strings.Split(infix, "-")
-	if len(parts) != 3 || parts[0] != "push" {
-		return 0, 0, fmt.Errorf("invalid filename infix %q", infix)
+	if parts[0] != "push" {
+		return false, 0, 0, nil
+	}
+	if len(parts) != 3 {
+		return false, 0, 0, fmt.Errorf("invalid filename infix %q", infix)
 	}
 	deviceIndex, err = strconv.ParseUint(parts[1], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return false, 0, 0, err
 	}
 	globalIndex, err = strconv.ParseUint(parts[2], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return false, 0, 0, err
 	}
-	return deviceIndex, globalIndex, nil
+	return true, deviceIndex, globalIndex, nil
 }
 
 func EncodeInfix(deviceIndex, globalIndex uint64) string {
@@ -114,20 +119,8 @@ type NightmarketHelper struct {
 }
 
 func InitHelper(remote string, configPath string) (gitremote.Helper, error) {
-	fi, err := os.Stat(configPath)
+	clerk, err := cryptapi.LoadConfig(configPath)
 	if err != nil {
-		return nil, err
-	}
-	if (fi.Mode() & os.ModePerm) != 0o600 {
-		return nil, fmt.Errorf(
-			"configuration %q is not protected from other users: chmod it to 0600 for safety", configPath)
-	}
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-	var config cryptapi.ClerkConfig
-	if err = json.Unmarshal(configData, &config); err != nil {
 		return nil, err
 	}
 	gitDir := os.Getenv("GIT_DIR")
@@ -139,7 +132,7 @@ func InitHelper(remote string, configPath string) (gitremote.Helper, error) {
 		return nil, errors.New("cannot access GIT_DIR")
 	}
 	nm := &NightmarketHelper{
-		Clerk:  cryptapi.NewClerk(config),
+		Clerk:  clerk,
 		GitDir: gitDir,
 		Remote: remote,
 		RefDB:  nil,
@@ -215,17 +208,20 @@ func (n *NightmarketHelper) listDownloads() ([]string, error) {
 	var orderedDownloads []string
 	indexLookup := map[string]uint64{}
 	for download := range toDownload {
-		orderedDownloads = append(orderedDownloads, download)
 		// validate that infix can be extracted
 		_, infix, _, err := cryptapi.SplitPath(download)
 		if err != nil {
 			return nil, err
 		}
-		_, globalIndex, err := DecodeInfix(infix)
+		isPush, _, globalIndex, err := DecodeInfix(infix)
 		if err != nil {
 			return nil, err
 		}
-		indexLookup[download] = globalIndex
+		// skip if this is another type of stored data (such as a git-annex special remote upload)
+		if isPush {
+			orderedDownloads = append(orderedDownloads, download)
+			indexLookup[download] = globalIndex
+		}
 	}
 	sort.Slice(orderedDownloads, func(i, j int) bool {
 		indexI, okI := indexLookup[orderedDownloads[i]]
@@ -496,9 +492,12 @@ func (n *NightmarketHelper) nextPackName(deviceName string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		deviceIndex, globalIndex, err := DecodeInfix(infix)
+		isPush, deviceIndex, globalIndex, err := DecodeInfix(infix)
 		if err != nil {
 			return "", err
+		}
+		if !isPush {
+			return "", fmt.Errorf("detected an improper previous download of non-push infix %q", infix)
 		}
 		if device == deviceName {
 			if deviceIndex >= nextDeviceIndex {

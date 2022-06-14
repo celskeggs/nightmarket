@@ -1,4 +1,4 @@
-module github.com/celskeggs/nightmarket/git-remote-nightmarket
+module github.com/celskeggs/nightmarket
 
 go 1.18
 

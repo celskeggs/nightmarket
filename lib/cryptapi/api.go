@@ -2,12 +2,14 @@ package cryptapi
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/sha3"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -15,7 +17,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
-	"github.com/celskeggs/nightmarket/git-remote-nightmarket/demonapi"
+	"github.com/celskeggs/nightmarket/lib/demonapi"
 	"github.com/hashicorp/go-multierror"
 )
 
@@ -31,18 +33,51 @@ type Clerk struct {
 	Config      ClerkConfig
 }
 
-func NewClerk(config ClerkConfig) *Clerk {
+func LoadConfig(configPath string) (*Clerk, error) {
+	fi, err := os.Stat(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if (fi.Mode() & os.ModePerm) != 0o600 {
+		return nil, fmt.Errorf(
+			"configuration %q is not protected from other users: chmod it to 0600 for safety", configPath)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	var config ClerkConfig
+	if err = json.Unmarshal(configData, &config); err != nil {
+		return nil, err
+	}
+	return NewClerk(config)
+}
+
+func NewClerk(config ClerkConfig) (*Clerk, error) {
+	if len(config.SecretKey) == 0 {
+		return nil, errors.New("invalid secret key: length is 0")
+	}
 	return &Clerk{
 		RemoteClerk: demonapi.Clerk{
 			Client: http.Client{},
 			Config: config.SpaceConfig,
 		},
 		Config: config,
-	}
+	}, nil
 }
 
 func (c *Clerk) DeviceName() (string, error) {
 	return c.RemoteClerk.DeviceName()
+}
+
+// HMAC is used by git-annex remote to protect filename infixes.
+func (c *Clerk) HMAC(key string) string {
+	if len(c.Config.SecretKey) == 0 {
+		panic("invalid secret key")
+	}
+	mac := hmac.New(sha3.New256, []byte(c.Config.SecretKey))
+	mac.Write([]byte(key))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (c *Clerk) ListObjects() ([]string, error) {
