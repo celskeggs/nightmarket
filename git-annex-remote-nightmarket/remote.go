@@ -7,6 +7,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"io"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -22,21 +24,39 @@ type Helper struct {
 func (h *Helper) ListConfigs() ([]annexremote.Config, error) {
 	return []annexremote.Config{
 		{
-			Name:        "configfile",
-			Description: "path to nightmarket configuration file",
+			Name:        "underlying",
+			Description: "git remote to retrieve underlying configuration for",
 		},
 	}, nil
 }
 
 func (h *Helper) loadConfigFile(a *annexremote.GitAnnex) (*cryptapi.Clerk, error) {
-	configPath, err := a.GetConfig("configfile")
+	underlying, err := a.GetConfig("underlying")
 	if err != nil {
 		return nil, err
 	}
-	if configPath == "" {
+	if underlying == "" {
 		return nil, fmt.Errorf("no 'configfile' setting configured")
 	}
-	return cryptapi.LoadConfig(configPath)
+	gitDir, err := a.GetGitDir()
+	if err != nil {
+		return nil, err
+	}
+	if gitDir == "" {
+		return nil, fmt.Errorf("invalid empty GIT_DIR setting detected")
+	}
+	cmd := exec.Command("git", "remote", "get-url", "--", underlying)
+	cmd.Env = append(os.Environ(), "GIT_DIR="+gitDir)
+	configURLBytes, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("while trying to run %q: %w", cmd, err)
+	}
+	configURL := strings.TrimSpace(string(configURLBytes))
+	const NightmarketPrefix = "nightmarket::"
+	if !strings.HasPrefix(configURL, NightmarketPrefix) {
+		return nil, fmt.Errorf("invalid URL for nightmarket remote %q: %q", underlying, configURL)
+	}
+	return cryptapi.LoadConfig(configURL[len(NightmarketPrefix):])
 }
 
 func (h *Helper) InitRemote(a *annexremote.GitAnnex) error {
