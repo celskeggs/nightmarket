@@ -64,10 +64,6 @@ func (h *Helper) InitRemote(a *annexremote.GitAnnex) error {
 	return err
 }
 
-func (h *Helper) invalidateCache() {
-	h.LastUpdate = time.Time{}
-}
-
 func (h *Helper) syncList() error {
 	if !h.LastUpdate.IsZero() && time.Now().Before(h.LastUpdate.Add(ResyncDelay)) {
 		// continue using previous ObjectList data
@@ -202,16 +198,8 @@ func (h *Helper) TransferStore(a *annexremote.GitAnnex, key string, tempfilepath
 	if err != nil {
 		return err
 	}
-	// validate it got uploaded correctly
-	h.invalidateCache()
-	path, err = h.locateFile(key)
-	if err != nil {
-		return err
-	}
-	if path != newPath {
-		return fmt.Errorf(
-			"transfer store command uploaded key %q as path %q, but locateFile produced path %q", key, newPath, path)
-	}
+	// add the new path to the cached list, to avoid an unnecessary round trip
+	h.ObjectList = append(h.ObjectList, newPath)
 	return nil
 }
 

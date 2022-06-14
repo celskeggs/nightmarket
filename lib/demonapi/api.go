@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -100,7 +102,22 @@ func (c *Clerk) Authenticate(mode, key, checksum string) (string, http.Header, s
 	return responseURL, headers, createdFilename, nil
 }
 
+const PrintTiming = false
+
+func timer(explanation string) func() {
+	if PrintTiming {
+		start := time.Now()
+		return func() {
+			_, _ = fmt.Fprintf(os.Stderr, "nightmarket: %s took %v\n", explanation, time.Since(start))
+		}
+	} else {
+		// do nothing
+		return func() {}
+	}
+}
+
 func (c *Clerk) ListObjectsV2() (*s3.ListObjectsV2Output, error) {
+	defer timer("ListObjectsV2")()
 	presignedURL, headers, _, err := c.Authenticate(ModeList, "", "")
 	if err != nil {
 		return nil, err
@@ -128,6 +145,7 @@ func (c *Clerk) ListObjectsV2() (*s3.ListObjectsV2Output, error) {
 }
 
 func (c *Clerk) GetObject(path string) ([]byte, error) {
+	defer timer("GetObject")()
 	stream, err := c.GetObjectStream(path)
 	if err != nil {
 		return nil, err
@@ -143,6 +161,7 @@ func (c *Clerk) GetObject(path string) ([]byte, error) {
 }
 
 func (c *Clerk) GetObjectStream(path string) (io.ReadCloser, error) {
+	defer timer("GetObjectStream")()
 	presignedURL, headers, _, err := c.Authenticate(ModeGet, path, "")
 	if err != nil {
 		return nil, err
@@ -165,12 +184,14 @@ func (c *Clerk) GetObjectStream(path string) (io.ReadCloser, error) {
 
 // PutObject returns the created filename.
 func (c *Clerk) PutObject(pathInfix string, data []byte) (string, error) {
+	defer timer("PutObject")()
 	checksum := sha256.Sum256(data)
 	return c.putObjectInternal(pathInfix, checksum[:], int64(len(data)), bytes.NewReader(data))
 }
 
 // Note: this WILL seek the stream to position 0 before beginning
 func (c *Clerk) PutObjectStream(pathInfix string, data io.ReadSeeker) (string, error) {
+	defer timer("PutObjectStream")()
 	if _, err := data.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
