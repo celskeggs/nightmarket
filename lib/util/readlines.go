@@ -19,3 +19,16 @@ func ReadLines(in io.Reader) func() (string, error) {
 		return line[:len(line)-1], nil
 	}
 }
+
+func Prompter(in io.Reader, out io.Writer) func(string) (string, error) {
+	reader := ReadLines(in)
+	return func(prompt string) (string, error) {
+		_, err := out.Write([]byte(prompt))
+		if err == io.EOF {
+			return "", errors.New("EOF on input")
+		} else if err != nil {
+			return "", err
+		}
+		return reader()
+	}
+}
