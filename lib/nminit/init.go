@@ -310,7 +310,7 @@ func initRepo(repoPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateGitConfig(); err != nil {
+	if err := validateGitConfig(prompt); err != nil {
 		return err
 	}
 	if err := os.Mkdir(repoPath, 0755); err != nil {
