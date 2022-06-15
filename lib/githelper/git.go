@@ -530,8 +530,6 @@ func (c *countWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-var errEmptyPack = errors.New("empty pack; do not upload")
-
 func (n *helper) Push(refs []gitremote.PushRef) ([]error, error) {
 	deviceName, err := n.Clerk.DeviceName()
 	if err != nil {
@@ -558,7 +556,7 @@ func (n *helper) Push(refs []gitremote.PushRef) ([]error, error) {
 			return
 		}
 		cw := &countWriter{}
-		cmd := exec.Command("git", "pack-objects", "--stdout", "--thin", "--revs", "--non-empty")
+		cmd := exec.Command("git", "pack-objects", "--stdout", "--thin", "--revs")
 		cmd.Stdout = io.MultiWriter(pw, cw)
 		cmd.Stdin = strings.NewReader(packPlan)
 		cmd.Stderr = os.Stderr
@@ -566,21 +564,12 @@ func (n *helper) Push(refs []gitremote.PushRef) ([]error, error) {
 		if encodeErr != nil {
 			return
 		}
-		if cw.Length == 0 {
-			encodeErr = errEmptyPack
-		}
 	}()
 	defer func() {
 		_ = pr.Close()
 		<-encodeDone
 	}()
 	createdFilename, err := n.Clerk.PutEncryptObjectStream(infix, pr)
-	if err == errEmptyPack {
-		// TODO: is this the right way to handle this condition? it prevents us from updating refs without new objects!
-		_, _ = fmt.Fprintf(os.Stderr, "Not uploading a new pack; no new data to transmit.\n")
-		// return no errors!
-		return make([]error, len(refs)), nil
-	}
 	if err != nil {
 		return nil, err
 	}
