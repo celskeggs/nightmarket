@@ -64,11 +64,41 @@ func gitRemoteAdd(path string, remote string, url string) error {
 	return cmd.Run()
 }
 
+func gitGetGlobalConfig(key string) (string, error) {
+	cmd := exec.Command("git", "config", "--get", "--", key)
+	cmd.Stderr = os.Stderr
+	value, err := cmd.Output()
+	if err != nil {
+		if x, ok := err.(*exec.ExitError); ok && x.ExitCode() == 1 && len(x.Stderr) == 0 {
+			return "", fmt.Errorf("git config variable not set: %q", key)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(value)), nil
+}
+
 func validateEnvPath() error {
 	_, err1 := exec.LookPath("git-remote-nightmarket")
 	_, err2 := exec.LookPath("git-annex-remote-nightmarket")
 	if err1 != nil || err2 != nil {
 		return multierror.Append(err1, err2)
+	}
+	return nil
+}
+
+func validateGitConfig(prompt func(string) (string, error)) error {
+	userName, err1 := gitGetGlobalConfig("user.name")
+	userEmail, err2 := gitGetGlobalConfig("user.email")
+	if err1 != nil || err2 != nil {
+		return multierror.Append(err1, err2)
+	}
+	fmt.Printf("Global identity: name=%q email=%q\n", userName, userEmail)
+	reply, err := prompt("Confirm identity (y/n)? ")
+	if err != nil {
+		return err
+	}
+	if strings.ToLower(reply) != "y" {
+		return errors.New("aborted by user")
 	}
 	return nil
 }
@@ -278,6 +308,9 @@ func initRepo(repoPath string) error {
 	prompt := util.Prompter(os.Stdin, os.Stdout)
 	configPath, err := selectConfiguration(configDir, prompt)
 	if err != nil {
+		return err
+	}
+	if err := validateGitConfig(); err != nil {
 		return err
 	}
 	if err := os.Mkdir(repoPath, 0755); err != nil {
