@@ -230,7 +230,7 @@ func selectConfiguration(configDir string, prompt func(string) (string, error)) 
 	fmt.Printf("Select one:\n")
 	for _, file := range files {
 		filename := file.Name()
-		selectable, description := describeExistingConfig(filename)
+		selectable, description := describeExistingConfig(path.Join(configDir, filename))
 		if selectable {
 			options = append(options, configOption{
 				Description: description,
