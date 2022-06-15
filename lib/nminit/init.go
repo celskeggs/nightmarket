@@ -16,8 +16,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
-func gitInit(path string) error {
-	cmd := exec.Command("git", "init")
+func gitInit(path, initialBranch string) error {
+	cmd := exec.Command("git", "init", "-b", initialBranch)
 	cmd.Dir = path
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -42,14 +42,6 @@ func gitAnnexSync(path string) error {
 
 func gitAnnexEnableRemote(path string, remote string) error {
 	cmd := exec.Command("git", "annex", "enableremote", "--", remote)
-	cmd.Dir = path
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func gitBranchRename(path string, name string) error {
-	cmd := exec.Command("git", "branch", "-m", "--", name)
 	cmd.Dir = path
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -316,10 +308,7 @@ func initRepo(repoPath string) error {
 	if err := os.Mkdir(repoPath, 0755); err != nil {
 		return err
 	}
-	if err := gitInit(repoPath); err != nil {
-		return err
-	}
-	if err := gitBranchRename(repoPath, "latest/main"); err != nil {
+	if err := gitInit(repoPath, "latest/main"); err != nil {
 		return err
 	}
 	if err := gitAnnexInit(repoPath); err != nil {
