@@ -22,6 +22,10 @@ type helper struct {
 	LastUpdate time.Time
 }
 
+func (h *helper) NegotiateAsync() bool {
+	return false
+}
+
 func (h *helper) ListConfigs() ([]annexremote.Config, error) {
 	return []annexremote.Config{
 		{
@@ -31,7 +35,7 @@ func (h *helper) ListConfigs() ([]annexremote.Config, error) {
 	}, nil
 }
 
-func (h *helper) loadConfigFile(a *annexremote.GitAnnex) (*cryptapi.Clerk, error) {
+func (h *helper) loadConfigFile(a *annexremote.Responder) (*cryptapi.Clerk, error) {
 	underlying, err := a.GetConfig("underlying")
 	if err != nil {
 		return nil, err
@@ -60,7 +64,7 @@ func (h *helper) loadConfigFile(a *annexremote.GitAnnex) (*cryptapi.Clerk, error
 	return cryptapi.LoadConfig(configURL[len(NightmarketPrefix):])
 }
 
-func (h *helper) InitRemote(a *annexremote.GitAnnex) error {
+func (h *helper) InitRemote(a *annexremote.Responder) error {
 	_, err := h.loadConfigFile(a)
 	return err
 }
@@ -82,7 +86,7 @@ func (h *helper) syncList() error {
 	return nil
 }
 
-func (h *helper) Prepare(a *annexremote.GitAnnex) error {
+func (h *helper) Prepare(a *annexremote.Responder) error {
 	clerk, err := h.loadConfigFile(a)
 	if err != nil {
 		return err
@@ -137,7 +141,7 @@ func (h *helper) locateFile(key string) (path string, err error) {
 	return h.findByKey(key)
 }
 
-func (h *helper) TransferRetrieve(a *annexremote.GitAnnex, key string, tempfilepath string) (err error) {
+func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfilepath string) (err error) {
 	// TODO: report progress messages
 	path, err := h.locateFile(key)
 	if err != nil {
@@ -170,7 +174,7 @@ func (h *helper) TransferRetrieve(a *annexremote.GitAnnex, key string, tempfilep
 	return nil
 }
 
-func (h *helper) CheckPresent(a *annexremote.GitAnnex, key string) (present bool, err error) {
+func (h *helper) CheckPresent(a *annexremote.Responder, key string) (present bool, err error) {
 	path, err := h.locateFile(key)
 	if err != nil {
 		return false, err
@@ -178,7 +182,7 @@ func (h *helper) CheckPresent(a *annexremote.GitAnnex, key string) (present bool
 	return path != "", nil
 }
 
-func (h *helper) TransferStore(a *annexremote.GitAnnex, key string, tempfilepath string) (err error) {
+func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepath string) (err error) {
 	path, err := h.locateFile(key)
 	if err != nil {
 		return err
@@ -204,7 +208,7 @@ func (h *helper) TransferStore(a *annexremote.GitAnnex, key string, tempfilepath
 	return nil
 }
 
-func (h *helper) Remove(a *annexremote.GitAnnex, key string) error {
+func (h *helper) Remove(a *annexremote.Responder, key string) error {
 	return fmt.Errorf("files cannot be removed from the nightmarket remote (by design)")
 }
 
