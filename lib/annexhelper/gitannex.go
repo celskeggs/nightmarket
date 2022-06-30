@@ -16,6 +16,8 @@ import (
 
 type void struct{}
 
+const LockDebug = true
+
 const resyncStartDelay = 10 * time.Second
 const resyncPauseDelay = 30 * time.Second
 
@@ -278,7 +280,14 @@ func (h *helper) Prepare(a *annexremote.Responder) error {
 	return nil
 }
 
-func (h *helper) lockKey(key string) {
+func (h *helper) lockKey(a *annexremote.Responder, key string) {
+	if LockDebug {
+		defer func() {
+			if err := a.Debug("Locked key: " + key); err != nil {
+				panic(err)
+			}
+		}()
+	}
 	h.KeyLocksLock.Lock()
 	defer h.KeyLocksLock.Unlock()
 	for {
@@ -291,7 +300,12 @@ func (h *helper) lockKey(key string) {
 	}
 }
 
-func (h *helper) unlockKey(key string) {
+func (h *helper) unlockKey(a *annexremote.Responder, key string) {
+	if LockDebug {
+		if err := a.Debug("Unlocked key: " + key); err != nil {
+			panic(err)
+		}
+	}
 	h.KeyLocksLock.Lock()
 	defer h.KeyLocksLock.Unlock()
 	_, found := h.KeyLocks[key]
@@ -334,8 +348,8 @@ func (h *helper) locateFile(key string) (path string, err error) {
 }
 
 func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfilepath string) (err error) {
-	h.lockKey(key)
-	defer h.unlockKey(key)
+	h.lockKey(a, key)
+	defer h.unlockKey(a, key)
 
 	// TODO: report progress messages
 	clerk, err := h.getClerk()
@@ -374,8 +388,8 @@ func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfile
 }
 
 func (h *helper) CheckPresent(a *annexremote.Responder, key string) (present bool, err error) {
-	h.lockKey(key)
-	defer h.unlockKey(key)
+	h.lockKey(a, key)
+	defer h.unlockKey(a, key)
 
 	path, err := h.locateFile(key)
 	if err != nil {
@@ -385,8 +399,8 @@ func (h *helper) CheckPresent(a *annexremote.Responder, key string) (present boo
 }
 
 func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepath string) (err error) {
-	h.lockKey(key)
-	defer h.unlockKey(key)
+	h.lockKey(a, key)
+	defer h.unlockKey(a, key)
 
 	clerk, err := h.getClerk()
 	if err != nil {

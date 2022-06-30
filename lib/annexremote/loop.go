@@ -176,7 +176,7 @@ func (r *Responder) GetState(key string) (string, error) {
 }
 
 func (r *Responder) Debug(message string) error {
-	return r.writeLine("DEBUG " + message)
+	return r.writeLine(fmt.Sprint("DEBUG (", r.job, ") ", message))
 }
 
 type Config struct {
