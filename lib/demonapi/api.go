@@ -53,9 +53,21 @@ func (c *Clerk) authenticate(mode, key, checksum string) (string, http.Header, s
 	if mode == ModePut {
 		values["sha256"] = []string{checksum}
 	}
-	response, err := c.Client.PostForm(c.Config.URL+"/watchdemon/authenticate", values)
-	if err != nil {
-		return "", nil, "", err
+	var response *http.Response
+	backOff := time.Second
+	for response == nil {
+		var err error
+		response, err = c.Client.PostForm(c.Config.URL+"/watchdemon/authenticate", values)
+		if err != nil {
+			return "", nil, "", err
+		}
+		if response.StatusCode == http.StatusTooManyRequests && backOff < time.Second*40 {
+			_ = response.Body.Close()
+			response = nil
+			// back off...
+			time.Sleep(backOff)
+			backOff *= 2
+		}
 	}
 	defer func() { _ = response.Body.Close() }()
 	var result map[string]interface{}
