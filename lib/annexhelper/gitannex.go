@@ -1,11 +1,13 @@
 package annexhelper
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/celskeggs/nightmarket/lib/annexremote"
@@ -13,17 +15,26 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
+type void struct{}
+
 const resyncDelay = 10 * time.Second
 
 type helper struct {
-	Clerk *cryptapi.Clerk
+	ClerkLock  sync.Mutex
+	ClerkMaybe *cryptapi.Clerk
+
 	// note: objectlist may become stale, so recheck if it really matters!
-	ObjectList []string
-	LastUpdate time.Time
+	ObjectLock       sync.Mutex
+	ObjectListLocked []string
+	LastUpdateLocked time.Time
+
+	KeyLocksLock sync.Mutex
+	KeyLocksCond sync.Cond
+	KeyLocks     map[string]void
 }
 
 func (h *helper) NegotiateAsync() bool {
-	return false
+	return true
 }
 
 func (h *helper) ListConfigs() ([]annexremote.Config, error) {
@@ -69,47 +80,110 @@ func (h *helper) InitRemote(a *annexremote.Responder) error {
 	return err
 }
 
-func (h *helper) syncList() error {
-	if !h.LastUpdate.IsZero() && time.Now().Before(h.LastUpdate.Add(resyncDelay)) {
-		// continue using previous ObjectList data
-		return nil
+func (h *helper) prepareClerk(a *annexremote.Responder) error {
+	h.ClerkLock.Lock()
+	defer h.ClerkLock.Unlock()
+	if h.ClerkMaybe == nil {
+		clerk, err := h.loadConfigFile(a)
+		if err != nil {
+			return err
+		}
+		h.ClerkMaybe = clerk
 	}
-	if h.Clerk == nil {
-		return fmt.Errorf("clerk not initialized; maybe we didn't get a PREPARE yet")
-	}
-	objects, err := h.Clerk.ListObjects()
-	if err != nil {
-		return err
-	}
-	h.ObjectList = objects
-	h.LastUpdate = time.Now()
 	return nil
+}
+
+func (h *helper) getClerk() (*cryptapi.Clerk, error) {
+	h.ClerkLock.Lock()
+	defer h.ClerkLock.Unlock()
+	if h.ClerkMaybe == nil {
+		return nil, fmt.Errorf("clerk not initialized; maybe we didn't get a PREPARE yet")
+	}
+	return h.ClerkMaybe, nil
+}
+
+func (h *helper) syncList() ([]string, error) {
+	h.ObjectLock.Lock()
+	defer h.ObjectLock.Unlock()
+	if !h.LastUpdateLocked.IsZero() && time.Now().Before(h.LastUpdateLocked.Add(resyncDelay)) {
+		// continue using previous ObjectList data
+		return nil, nil
+	}
+	clerk, err := h.getClerk()
+	if err != nil {
+		return nil, err
+	}
+	objects, err := clerk.ListObjects()
+	if err != nil {
+		return nil, err
+	}
+	h.ObjectListLocked = objects
+	h.LastUpdateLocked = time.Now()
+	return objects, nil
+}
+
+func (h *helper) addObjectToList(object string) {
+	h.ObjectLock.Lock()
+	defer h.ObjectLock.Unlock()
+	h.ObjectListLocked = append(h.ObjectListLocked, object)
+}
+
+func (h *helper) getObjectList() ([]string, error) {
+	h.ObjectLock.Lock()
+	defer h.ObjectLock.Unlock()
+	if h.LastUpdateLocked.IsZero() {
+		return nil, errors.New("object list not populated")
+	}
+	return h.ObjectListLocked, nil
 }
 
 func (h *helper) Prepare(a *annexremote.Responder) error {
-	clerk, err := h.loadConfigFile(a)
-	if err != nil {
+	if err := h.prepareClerk(a); err != nil {
 		return err
 	}
-	h.Clerk = clerk
-	if err := h.syncList(); err != nil {
+	if _, err := h.syncList(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// reproducible filename hash
-func (h *helper) keyToInfix(key string) string {
-	return "upload-" + h.Clerk.HMAC(key)
+func (h *helper) lockKey(key string) {
+	h.KeyLocksLock.Lock()
+	defer h.KeyLocksLock.Unlock()
+	for {
+		_, found := h.KeyLocks[key]
+		if !found {
+			h.KeyLocks[key] = void{}
+			return
+		}
+		h.KeyLocksCond.Wait()
+	}
 }
 
-func (h *helper) findByKey(key string) (path string, err error) {
-	if h.Clerk == nil {
-		return "", fmt.Errorf("clerk not initialized; maybe we didn't get a PREPARE yet")
+func (h *helper) unlockKey(key string) {
+	h.KeyLocksLock.Lock()
+	defer h.KeyLocksLock.Unlock()
+	_, found := h.KeyLocks[key]
+	if !found {
+		panic("attempt to unlock key that was not locked")
 	}
-	cryptedFilename := h.keyToInfix(key)
+	delete(h.KeyLocks, key)
+	h.KeyLocksCond.Broadcast()
+}
+
+// reproducible filename hash
+func keyToInfix(clerk *cryptapi.Clerk, key string) string {
+	return "upload-" + clerk.HMAC(key)
+}
+
+func (h *helper) findByKey(key string, objects []string) (path string, err error) {
+	clerk, err := h.getClerk()
+	if err != nil {
+		return "", err
+	}
+	cryptedFilename := keyToInfix(clerk, key)
 	path = "" // return value if not found
-	for _, objectPath := range h.ObjectList {
+	for _, objectPath := range objects {
 		_, infix, _, err := cryptapi.SplitPath(objectPath)
 		if err != nil {
 			return "", err
@@ -126,7 +200,11 @@ func (h *helper) findByKey(key string) (path string, err error) {
 
 func (h *helper) locateFile(key string) (path string, err error) {
 	// first do a check to see if we've already located the file, without any network traffic
-	path, err = h.findByKey(key)
+	objects, err := h.getObjectList()
+	if err != nil {
+		return "", err
+	}
+	path, err = h.findByKey(key, objects)
 	if err != nil {
 		return "", err
 	}
@@ -134,15 +212,23 @@ func (h *helper) locateFile(key string) (path string, err error) {
 		return path, nil
 	}
 	// did not find it, so sync against the remote (if it's been more than the timeout)
-	if err := h.syncList(); err != nil {
+	objects, err = h.syncList()
+	if err != nil {
 		return "", err
 	}
 	// check again, and whatever this result is, it's final.
-	return h.findByKey(key)
+	return h.findByKey(key, objects)
 }
 
 func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfilepath string) (err error) {
+	h.lockKey(key)
+	defer h.unlockKey(key)
+
 	// TODO: report progress messages
+	clerk, err := h.getClerk()
+	if err != nil {
+		return err
+	}
 	path, err := h.locateFile(key)
 	if err != nil {
 		return err
@@ -159,7 +245,7 @@ func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfile
 			err = multierror.Append(err, err2)
 		}
 	}()
-	rc, err := h.Clerk.GetDecryptObjectStream(path)
+	rc, err := clerk.GetDecryptObjectStream(path)
 	if err != nil {
 		return err
 	}
@@ -175,6 +261,9 @@ func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfile
 }
 
 func (h *helper) CheckPresent(a *annexremote.Responder, key string) (present bool, err error) {
+	h.lockKey(key)
+	defer h.unlockKey(key)
+
 	path, err := h.locateFile(key)
 	if err != nil {
 		return false, err
@@ -183,6 +272,13 @@ func (h *helper) CheckPresent(a *annexremote.Responder, key string) (present boo
 }
 
 func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepath string) (err error) {
+	h.lockKey(key)
+	defer h.unlockKey(key)
+
+	clerk, err := h.getClerk()
+	if err != nil {
+		return err
+	}
 	path, err := h.locateFile(key)
 	if err != nil {
 		return err
@@ -199,12 +295,12 @@ func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepat
 			err = multierror.Append(err, err2)
 		}
 	}()
-	newPath, err := h.Clerk.PutEncryptObjectStream(h.keyToInfix(key), f)
+	newPath, err := clerk.PutEncryptObjectStream(keyToInfix(clerk, key), f)
 	if err != nil {
 		return err
 	}
 	// add the new path to the cached list, to avoid an unnecessary round trip
-	h.ObjectList = append(h.ObjectList, newPath)
+	h.addObjectToList(newPath)
 	return nil
 }
 
