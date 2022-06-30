@@ -25,7 +25,7 @@ type helper struct {
 
 	// note: objectlist may become stale, so recheck if it really matters!
 	ObjectLock       sync.Mutex
-	ObjectListLocked []string
+	ObjectMapLocked  map[string]ObjectMetadata
 	LastUpdateLocked time.Time
 
 	KeyLocksLock sync.Mutex
@@ -102,7 +102,31 @@ func (h *helper) getClerk() (*cryptapi.Clerk, error) {
 	return h.ClerkMaybe, nil
 }
 
-func (h *helper) syncList() ([]string, error) {
+type ObjectMetadata struct {
+	Error      error
+	ObjectPath string
+}
+
+func generateObjectMap(objects []string) (map[string]ObjectMetadata, error) {
+	objMap := map[string]ObjectMetadata{}
+	for _, objectPath := range objects {
+		_, infix, _, err := cryptapi.SplitPath(objectPath)
+		if err != nil {
+			return nil, err
+		}
+		om := ObjectMetadata{
+			ObjectPath: objectPath,
+		}
+		if oldMeta, found := objMap[infix]; found {
+			om.Error = fmt.Errorf(
+				"detected duplicate files for infix %q: %q and %q", infix, oldMeta.ObjectPath, objectPath)
+		}
+		objMap[infix] = om
+	}
+	return objMap, nil
+}
+
+func (h *helper) syncList() (map[string]ObjectMetadata, error) {
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
 	if !h.LastUpdateLocked.IsZero() && time.Now().Before(h.LastUpdateLocked.Add(resyncDelay)) {
@@ -117,24 +141,44 @@ func (h *helper) syncList() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	h.ObjectListLocked = objects
+	objMap, err := generateObjectMap(objects)
+	if err != nil {
+		return nil, err
+	}
+	h.ObjectMapLocked = objMap
 	h.LastUpdateLocked = time.Now()
-	return objects, nil
+	return objMap, nil
 }
 
-func (h *helper) addObjectToList(object string) {
+func (h *helper) addObjectToList(objectPath string) error {
+	_, infix, _, err := cryptapi.SplitPath(objectPath)
+	if err != nil {
+		return err
+	}
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
-	h.ObjectListLocked = append(h.ObjectListLocked, object)
+	// must make a new copy for concurrency safety
+	om := map[string]ObjectMetadata{}
+	for k, v := range h.ObjectMapLocked {
+		om[k] = v
+	}
+	if _, found := om[infix]; found {
+		return fmt.Errorf("attempt to add duplicate object to list: infix %q", infix)
+	}
+	om[infix] = ObjectMetadata{
+		ObjectPath: objectPath,
+	}
+	h.ObjectMapLocked = om
+	return nil
 }
 
-func (h *helper) getObjectList() ([]string, error) {
+func (h *helper) getObjectMap() (map[string]ObjectMetadata, error) {
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
 	if h.LastUpdateLocked.IsZero() {
 		return nil, errors.New("object list not populated")
 	}
-	return h.ObjectListLocked, nil
+	return h.ObjectMapLocked, nil
 }
 
 func (h *helper) Prepare(a *annexremote.Responder) error {
@@ -176,31 +220,29 @@ func keyToInfix(clerk *cryptapi.Clerk, key string) string {
 	return "upload-" + clerk.HMAC(key)
 }
 
-func (h *helper) findByKey(key string, objects []string) (path string, err error) {
+func (h *helper) findByKey(key string, objects map[string]ObjectMetadata) (path string, err error) {
 	clerk, err := h.getClerk()
 	if err != nil {
 		return "", err
 	}
 	cryptedFilename := keyToInfix(clerk, key)
-	path = "" // return value if not found
-	for _, objectPath := range objects {
-		_, infix, _, err := cryptapi.SplitPath(objectPath)
-		if err != nil {
-			return "", err
-		}
-		if infix == cryptedFilename {
-			if path != "" {
-				return "", fmt.Errorf("detected duplicate files for key %q: %q and %q", key, path, objectPath)
-			}
-			path = objectPath
-		}
+	metadata, found := objects[cryptedFilename]
+	if !found {
+		// not found
+		return "", nil
 	}
-	return path, nil
+	if metadata.Error != nil {
+		return "", metadata.Error
+	}
+	if metadata.ObjectPath == "" {
+		panic("invalid object path")
+	}
+	return metadata.ObjectPath, nil
 }
 
 func (h *helper) locateFile(key string) (path string, err error) {
 	// first do a check to see if we've already located the file, without any network traffic
-	objects, err := h.getObjectList()
+	objects, err := h.getObjectMap()
 	if err != nil {
 		return "", err
 	}
