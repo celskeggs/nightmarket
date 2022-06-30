@@ -16,7 +16,7 @@ import (
 
 type void struct{}
 
-const LockDebug = true
+const LockDebug = false
 
 const resyncStartDelay = 10 * time.Second
 const resyncPauseDelay = 30 * time.Second
@@ -248,8 +248,14 @@ func (h *helper) addObjectToList(objectPath string) error {
 	}
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
-	if _, found := h.ObjectMapLocked[infix]; found {
-		return fmt.Errorf("attempt to add duplicate object to list: infix %q", infix)
+	if metadata, found := h.ObjectMapLocked[infix]; found {
+		if metadata.ObjectPath == objectPath {
+			// this is caused by the synchronization thread noticing we added this before we report it. it's fine.
+			return nil
+		} else {
+			// but if the object paths DON'T match, then we actually have two different uploads!
+			return fmt.Errorf("attempt to add duplicate object to list: infix %q", infix)
+		}
 	}
 	h.ObjectMapLocked[infix] = ObjectMetadata{
 		ObjectPath: objectPath,
