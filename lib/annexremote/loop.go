@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,7 +14,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
-const TraceIO = true
+const TraceIO = false
+const Profile = true
 
 type GitAnnex struct {
 	readLine func() (string, error)
@@ -368,7 +370,22 @@ func (a *GitAnnex) startResponder(helper Helper, jobNum int, wg *sync.WaitGroup,
 	return resp
 }
 
-func (a *GitAnnex) mainloop(helper Helper) error {
+func (a *GitAnnex) mainloop(helper Helper) (oe error) {
+	if Profile {
+		f, err := os.Create(fmt.Sprintf("/tmp/annex-%d.profile.out", os.Getpid()))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := f.Close(); err != nil {
+				oe = multierror.Append(oe, err)
+			}
+		}()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return err
+		}
+		defer pprof.StopCPUProfile()
+	}
 	if err := a.writePlainLine("VERSION 1"); err != nil {
 		return err
 	}
