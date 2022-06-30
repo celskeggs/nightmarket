@@ -1,7 +1,6 @@
 package annexhelper
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,28 +125,32 @@ func generateObjectMap(objects []string) (map[string]ObjectMetadata, error) {
 	return objMap, nil
 }
 
-func (h *helper) syncList() (map[string]ObjectMetadata, error) {
+func (h *helper) syncList() error {
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
+	return h.syncListLocked()
+}
+
+func (h *helper) syncListLocked() error {
 	if !h.LastUpdateLocked.IsZero() && time.Now().Before(h.LastUpdateLocked.Add(resyncDelay)) {
 		// continue using previous ObjectList data
-		return nil, nil
+		return nil
 	}
 	clerk, err := h.getClerk()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	objects, err := clerk.ListObjects()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	objMap, err := generateObjectMap(objects)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	h.ObjectMapLocked = objMap
 	h.LastUpdateLocked = time.Now()
-	return objMap, nil
+	return nil
 }
 
 func (h *helper) addObjectToList(objectPath string) error {
@@ -157,35 +160,33 @@ func (h *helper) addObjectToList(objectPath string) error {
 	}
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
-	// must make a new copy for concurrency safety
-	om := map[string]ObjectMetadata{}
-	for k, v := range h.ObjectMapLocked {
-		om[k] = v
-	}
-	if _, found := om[infix]; found {
+	if _, found := h.ObjectMapLocked[infix]; found {
 		return fmt.Errorf("attempt to add duplicate object to list: infix %q", infix)
 	}
-	om[infix] = ObjectMetadata{
+	h.ObjectMapLocked[infix] = ObjectMetadata{
 		ObjectPath: objectPath,
 	}
-	h.ObjectMapLocked = om
 	return nil
 }
 
-func (h *helper) getObjectMap() (map[string]ObjectMetadata, error) {
+func (h *helper) getObjectMetadata(infix string) (ObjectMetadata, bool, error) {
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
-	if h.LastUpdateLocked.IsZero() {
-		return nil, errors.New("object list not populated")
+	metadata, found := h.ObjectMapLocked[infix]
+	if !found {
+		if err := h.syncListLocked(); err != nil {
+			return ObjectMetadata{}, false, err
+		}
+		metadata, found = h.ObjectMapLocked[infix]
 	}
-	return h.ObjectMapLocked, nil
+	return metadata, found, nil
 }
 
 func (h *helper) Prepare(a *annexremote.Responder) error {
 	if err := h.prepareClerk(a); err != nil {
 		return err
 	}
-	if _, err := h.syncList(); err != nil {
+	if err := h.syncList(); err != nil {
 		return err
 	}
 	return nil
@@ -220,46 +221,30 @@ func keyToInfix(clerk *cryptapi.Clerk, key string) string {
 	return "upload-" + clerk.HMAC(key)
 }
 
-func (h *helper) findByKey(key string, objects map[string]ObjectMetadata) (path string, err error) {
+func (h *helper) locateFile(key string) (path string, err error) {
 	clerk, err := h.getClerk()
 	if err != nil {
 		return "", err
 	}
 	cryptedFilename := keyToInfix(clerk, key)
-	metadata, found := objects[cryptedFilename]
+	// first do a check to see if we've already located the file, without any network traffic
+	metadata, found, err := h.getObjectMetadata(cryptedFilename)
+	if err != nil {
+		return "", err
+	}
 	if !found {
 		// not found
 		return "", nil
 	}
 	if metadata.Error != nil {
+		// there's an issue with the object, so report that now
 		return "", metadata.Error
 	}
 	if metadata.ObjectPath == "" {
 		panic("invalid object path")
 	}
+	// found something!
 	return metadata.ObjectPath, nil
-}
-
-func (h *helper) locateFile(key string) (path string, err error) {
-	// first do a check to see if we've already located the file, without any network traffic
-	objects, err := h.getObjectMap()
-	if err != nil {
-		return "", err
-	}
-	path, err = h.findByKey(key, objects)
-	if err != nil {
-		return "", err
-	}
-	if path != "" {
-		return path, nil
-	}
-	// did not find it, so sync against the remote (if it's been more than the timeout)
-	objects, err = h.syncList()
-	if err != nil {
-		return "", err
-	}
-	// check again, and whatever this result is, it's final.
-	return h.findByKey(key, objects)
 }
 
 func (h *helper) TransferRetrieve(a *annexremote.Responder, key string, tempfilepath string) (err error) {
