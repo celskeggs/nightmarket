@@ -309,5 +309,11 @@ func (h *helper) Remove(a *annexremote.Responder, key string) error {
 }
 
 func Init() annexremote.Helper {
-	return &helper{}
+	h := &helper{
+		KeyLocksLock: sync.Mutex{},
+		KeyLocksCond: sync.Cond{},
+		KeyLocks:     map[string]void{},
+	}
+	h.KeyLocksCond.L = &h.KeyLocksLock
+	return h
 }
