@@ -13,6 +13,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
+const TraceIO = true
+
 type GitAnnex struct {
 	readLine func() (string, error)
 	output   io.StringWriter
@@ -63,6 +65,9 @@ func (a *GitAnnex) writePlainLine(line string) error {
 	a.outLock.Lock()
 	defer a.outLock.Unlock()
 	_, err := a.output.WriteString(line + "\n")
+	if TraceIO {
+		_, _ = fmt.Fprintf(os.Stderr, "TO ANNEX:  %q\n", line)
+	}
 	return err
 }
 
@@ -383,6 +388,9 @@ func (a *GitAnnex) mainloop(helper Helper) error {
 					readErr <- err
 				}
 				break
+			}
+			if TraceIO {
+				_, _ = fmt.Fprintf(os.Stderr, "TO HELPER: %q\n", line)
 			}
 			lines <- line
 		}
