@@ -63,7 +63,7 @@ func (c *Clerk) authenticate(mode, key, checksum string) (string, http.Header, s
 		return "", nil, "", err
 	}
 	if str, ok := result["error"].(string); ok {
-		return "", nil, "", fmt.Errorf("remote error: %q", str)
+		return "", nil, "", fmt.Errorf("remote error (status %d %q): %q", response.StatusCode, response.Status, str)
 	}
 	responseURL, ok := result["url"].(string)
 	if !ok {
