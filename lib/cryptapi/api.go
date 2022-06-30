@@ -81,19 +81,28 @@ func (c *Clerk) HMAC(key string) string {
 }
 
 func (c *Clerk) ListObjects() ([]string, error) {
-	objects, err := c.RemoteClerk.ListObjectsV2()
-	if err != nil {
-		return nil, err
-	}
-	// TODO: fix so that this function works correctly with pagination
-	if *objects.IsTruncated {
-		return nil, errors.New("did not return all paths in ListObjects()")
-	}
+	var contToken *string = nil
 	var paths []string
-	for _, object := range objects.Contents {
-		paths = append(paths, *object.Key)
+	for {
+		objects, err := c.RemoteClerk.ListObjectsV2(contToken)
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range objects.Contents {
+			paths = append(paths, *object.Key)
+		}
+		if !*objects.IsTruncated {
+			fmt.Printf("Number of paths: %d\n", len(paths))
+			return paths, nil
+		}
+		if objects.NextContinuationToken == nil {
+			return nil, errors.New("IsTruncated set but no NextContinuationToken")
+		}
+		if contToken != nil && *objects.NextContinuationToken == *contToken {
+			return nil, errors.New("continuation token did not advance")
+		}
+		contToken = objects.NextContinuationToken
 	}
-	return paths, nil
 }
 
 func SplitPath(path string) (device, infix, hash string, e error) {

@@ -37,7 +37,7 @@ type Clerk struct {
 	Config ClerkConfig
 }
 
-func (c *Clerk) Authenticate(mode, key, checksum string) (string, http.Header, string, error) {
+func (c *Clerk) authenticate(mode, key, checksum string) (string, http.Header, string, error) {
 	if len(c.Config.URL) == 0 || len(c.Config.DeviceName) == 0 || len(c.Config.DeviceToken) == 0 || len(c.Config.SpacePrefix) == 0 {
 		return "", nil, "", errors.New("missing configuration")
 	}
@@ -48,12 +48,9 @@ func (c *Clerk) Authenticate(mode, key, checksum string) (string, http.Header, s
 		"device": []string{c.Config.DeviceName},
 		"token":  []string{c.Config.DeviceToken},
 		"mode":   []string{mode},
-	}
-	if mode == ModeGet {
-		values["key"] = []string{key}
+		"key":    []string{key},
 	}
 	if mode == ModePut {
-		values["key"] = []string{key}
 		values["sha256"] = []string{checksum}
 	}
 	response, err := c.Client.PostForm(c.Config.URL+"/watchdemon/authenticate", values)
@@ -116,9 +113,16 @@ func timer(explanation string) func() {
 	}
 }
 
-func (c *Clerk) ListObjectsV2() (*s3.ListObjectsV2Output, error) {
+func (c *Clerk) ListObjectsV2(continuationToken *string) (*s3.ListObjectsV2Output, error) {
 	defer timer("ListObjectsV2")()
-	presignedURL, headers, _, err := c.Authenticate(ModeList, "", "")
+	var contKey string
+	if continuationToken != nil {
+		if *continuationToken == "" {
+			return nil, errors.New("continuation token cannot be empty")
+		}
+		contKey = *continuationToken
+	}
+	presignedURL, headers, _, err := c.authenticate(ModeList, contKey, "")
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +166,7 @@ func (c *Clerk) GetObject(path string) ([]byte, error) {
 
 func (c *Clerk) GetObjectStream(path string) (io.ReadCloser, error) {
 	defer timer("GetObjectStream")()
-	presignedURL, headers, _, err := c.Authenticate(ModeGet, path, "")
+	presignedURL, headers, _, err := c.authenticate(ModeGet, path, "")
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +215,7 @@ func (c *Clerk) putObjectInternal(pathInfix string, sha256sum []byte, length int
 		return "", errors.New("invalid hash")
 	}
 	checksum := hex.EncodeToString(sha256sum)
-	presignedURL, headers, createdFilename, err := c.Authenticate(ModePut, pathInfix, checksum)
+	presignedURL, headers, createdFilename, err := c.authenticate(ModePut, pathInfix, checksum)
 	if err != nil {
 		return "", err
 	}

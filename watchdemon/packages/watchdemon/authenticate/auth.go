@@ -3,15 +3,16 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"os"
+	"time"
+
 	"github.com/alexedwards/argon2id"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"net/http"
-	"os"
-	"time"
 )
 
 type Reply struct {
@@ -39,7 +40,8 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 	device, ok1 := in["device"].(string)
 	token, ok2 := in["token"].(string)
 	mode, ok3 := in["mode"].(string)
-	if !ok1 || len(device) == 0 || !ok2 || len(token) == 0 || !ok3 || len(mode) == 0 {
+	key, ok4 := in["key"].(string)
+	if !ok1 || len(device) == 0 || !ok2 || len(token) == 0 || !ok3 || len(mode) == 0 || !ok4 {
 		return response(ReplyError{"invalid parameters"})
 	}
 	authorizedTokensStr := os.Getenv("WATCHDEMON_AUTHORIZED")
@@ -84,12 +86,15 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 	var req *request.Request
 	switch mode {
 	case "List":
-		req, _ = api.ListObjectsV2Request(&s3.ListObjectsV2Input{
+		input := &s3.ListObjectsV2Input{
 			Bucket: aws.String(spaceName),
-		})
+		}
+		if len(key) != 0 {
+			input.ContinuationToken = aws.String(key)
+		}
+		req, _ = api.ListObjectsV2Request(input)
 	case "Get":
-		key, okKey := in["key"].(string)
-		if !okKey || len(key) == 0 {
+		if len(key) == 0 {
 			return response(ReplyError{"no key specified"})
 		}
 		req, _ = api.GetObjectRequest(&s3.GetObjectInput{
@@ -97,9 +102,8 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 			Key:    aws.String(key),
 		})
 	case "Put":
-		key, okKey := in["key"].(string)
 		sha256, okSHA256 := in["sha256"].(string)
-		if !okKey || len(key) == 0 || !okSHA256 || len(sha256) != 64 {
+		if len(key) == 0 || !okSHA256 || len(sha256) != 64 {
 			return response(ReplyError{"either no key or no hash specified"})
 		}
 		// make sure it's a valid sha256 string
