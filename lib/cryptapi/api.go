@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/celskeggs/nightmarket/lib/demonapi"
@@ -26,6 +27,7 @@ const Version = 1
 type ClerkConfig struct {
 	SecretKey   string               `json:"secret-key"`
 	SpaceConfig demonapi.ClerkConfig `json:"space"`
+	WorkFactor  int                  `json:"age-work-factor"`
 }
 
 type Clerk struct {
@@ -56,6 +58,11 @@ func LoadConfig(configPath string) (*Clerk, error) {
 func NewClerk(config ClerkConfig) (*Clerk, error) {
 	if len(config.SecretKey) == 0 {
 		return nil, errors.New("invalid secret key: length is 0")
+	}
+	// don't allow a work factor that we can't decrypt
+	// (but allow 0, which we will use to mean "the default")
+	if config.WorkFactor > 22 || config.WorkFactor < 0 {
+		return nil, errors.New("invalid work factor")
 	}
 	return &Clerk{
 		RemoteClerk: demonapi.Clerk{
@@ -230,6 +237,9 @@ func (c *Clerk) PutEncryptObjectStream(pathInfix string, data io.Reader) (create
 	recipient, err := age.NewScryptRecipient(c.Config.SecretKey)
 	if err != nil {
 		return "", err
+	}
+	if c.Config.WorkFactor != 0 {
+		recipient.SetWorkFactor(c.Config.WorkFactor)
 	}
 	f, err := ioutil.TempFile("", "encrypted-object")
 	if err != nil {
