@@ -163,7 +163,6 @@ func newSyncher(clerk *cryptapi.Clerk) *syncher {
 }
 
 func (s *syncher) postComplete(result *synchResult) {
-	_, _ = fmt.Fprintf(os.Stderr, "PostComplete\n")
 	s.StateLock.Lock()
 	defer s.StateLock.Unlock()
 	if result != nil {
@@ -177,11 +176,9 @@ func (s *syncher) postComplete(result *synchResult) {
 	for !s.Started || s.Completion != nil {
 		s.StateCond.Wait()
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "Ready\n")
 }
 
 func (s *syncher) Start() {
-	_, _ = fmt.Fprintf(os.Stderr, "Start\n")
 	s.StateLock.Lock()
 	defer s.StateLock.Unlock()
 	s.Started = true
@@ -189,7 +186,6 @@ func (s *syncher) Start() {
 }
 
 func (s *syncher) Wait() {
-	_, _ = fmt.Fprintf(os.Stderr, "Wait\n")
 	s.StateLock.Lock()
 	defer s.StateLock.Unlock()
 	if !s.Started {
@@ -201,7 +197,6 @@ func (s *syncher) Wait() {
 }
 
 func (s *syncher) CheckUpdate() (bool, map[string]ObjectMetadata, time.Time, error) {
-	_, _ = fmt.Fprintf(os.Stderr, "CheckUpdate\n")
 	s.StateLock.Lock()
 	defer s.StateLock.Unlock()
 	if s.Completion != nil {
@@ -402,7 +397,8 @@ func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepat
 		return err
 	}
 	if path != "" {
-		return fmt.Errorf("attempt to upload file %q that already exists on the remote", key)
+		// already exists on the remote! no need to upload!
+		return nil
 	}
 	f, err := os.Open(tempfilepath)
 	if err != nil {
