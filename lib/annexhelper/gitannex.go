@@ -16,7 +16,8 @@ import (
 
 type void struct{}
 
-const resyncDelay = 10 * time.Second
+const resyncStartDelay = 10 * time.Second
+const resyncPauseDelay = 30 * time.Second
 
 type helper struct {
 	ClerkLock  sync.Mutex
@@ -26,6 +27,7 @@ type helper struct {
 	ObjectLock       sync.Mutex
 	ObjectMapLocked  map[string]ObjectMetadata
 	LastUpdateLocked time.Time
+	Syncher          *syncher
 
 	KeyLocksLock sync.Mutex
 	KeyLocksCond sync.Cond
@@ -125,6 +127,91 @@ func generateObjectMap(objects []string) (map[string]ObjectMetadata, error) {
 	return objMap, nil
 }
 
+type synchResult struct {
+	ObjectMap  map[string]ObjectMetadata
+	UpdateTime time.Time
+	Error      error
+}
+
+type syncher struct {
+	StateLock  sync.Mutex
+	StateCond  sync.Cond
+	Started    bool
+	Completion *synchResult
+}
+
+func newSyncher(clerk *cryptapi.Clerk) *syncher {
+	s := &syncher{}
+	s.StateCond.L = &s.StateLock
+	go func() {
+		s.postComplete(nil)
+		for {
+			result := &synchResult{}
+			objects, err := clerk.ListObjects()
+			if err == nil {
+				objMap, err := generateObjectMap(objects)
+				if err == nil {
+					result.ObjectMap = objMap
+				}
+			}
+			result.Error = err
+			result.UpdateTime = time.Now()
+			s.postComplete(result)
+		}
+	}()
+	return s
+}
+
+func (s *syncher) postComplete(result *synchResult) {
+	_, _ = fmt.Fprintf(os.Stderr, "PostComplete\n")
+	s.StateLock.Lock()
+	defer s.StateLock.Unlock()
+	if result != nil {
+		if !s.Started || s.Completion != nil {
+			panic("invalid state")
+		}
+		s.Completion = result
+		s.StateCond.Broadcast()
+	}
+	// wait until we have work to do
+	for !s.Started || s.Completion != nil {
+		s.StateCond.Wait()
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "Ready\n")
+}
+
+func (s *syncher) Start() {
+	_, _ = fmt.Fprintf(os.Stderr, "Start\n")
+	s.StateLock.Lock()
+	defer s.StateLock.Unlock()
+	s.Started = true
+	s.StateCond.Broadcast()
+}
+
+func (s *syncher) Wait() {
+	_, _ = fmt.Fprintf(os.Stderr, "Wait\n")
+	s.StateLock.Lock()
+	defer s.StateLock.Unlock()
+	if !s.Started {
+		panic("invalid state")
+	}
+	for s.Completion == nil {
+		s.StateCond.Wait()
+	}
+}
+
+func (s *syncher) CheckUpdate() (bool, map[string]ObjectMetadata, time.Time, error) {
+	_, _ = fmt.Fprintf(os.Stderr, "CheckUpdate\n")
+	s.StateLock.Lock()
+	defer s.StateLock.Unlock()
+	if s.Completion != nil {
+		c := s.Completion
+		s.Started, s.Completion = false, nil
+		return true, c.ObjectMap, c.UpdateTime, c.Error
+	}
+	return false, nil, time.Time{}, nil
+}
+
 func (h *helper) syncList() error {
 	h.ObjectLock.Lock()
 	defer h.ObjectLock.Unlock()
@@ -132,24 +219,28 @@ func (h *helper) syncList() error {
 }
 
 func (h *helper) syncListLocked() error {
-	if !h.LastUpdateLocked.IsZero() && time.Now().Before(h.LastUpdateLocked.Add(resyncDelay)) {
-		// continue using previous ObjectList data
-		return nil
+	if h.LastUpdateLocked.IsZero() || time.Now().After(h.LastUpdateLocked.Add(resyncPauseDelay)) {
+		if h.Syncher == nil {
+			clerk, err := h.getClerk()
+			if err != nil {
+				return err
+			}
+			h.Syncher = newSyncher(clerk)
+		}
+		h.Syncher.Start()
+		h.Syncher.Wait()
 	}
-	clerk, err := h.getClerk()
+	updated, objMap, updateTime, err := h.Syncher.CheckUpdate()
 	if err != nil {
 		return err
 	}
-	objects, err := clerk.ListObjects()
-	if err != nil {
-		return err
+	if updated {
+		h.ObjectMapLocked = objMap
+		h.LastUpdateLocked = updateTime
 	}
-	objMap, err := generateObjectMap(objects)
-	if err != nil {
-		return err
+	if time.Now().After(h.LastUpdateLocked.Add(resyncStartDelay)) {
+		h.Syncher.Start()
 	}
-	h.ObjectMapLocked = objMap
-	h.LastUpdateLocked = time.Now()
 	return nil
 }
 
@@ -327,8 +418,7 @@ func (h *helper) TransferStore(a *annexremote.Responder, key string, tempfilepat
 		return err
 	}
 	// add the new path to the cached list, to avoid an unnecessary round trip
-	h.addObjectToList(newPath)
-	return nil
+	return h.addObjectToList(newPath)
 }
 
 func (h *helper) Remove(a *annexremote.Responder, key string) error {
