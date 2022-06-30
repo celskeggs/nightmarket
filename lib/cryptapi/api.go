@@ -92,7 +92,6 @@ func (c *Clerk) ListObjects() ([]string, error) {
 			paths = append(paths, *object.Key)
 		}
 		if !*objects.IsTruncated {
-			fmt.Printf("Number of paths: %d\n", len(paths))
 			return paths, nil
 		}
 		if objects.NextContinuationToken == nil {
