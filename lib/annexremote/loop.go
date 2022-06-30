@@ -4,14 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/celskeggs/nightmarket/lib/util"
 	"github.com/hashicorp/go-multierror"
+	_ "net/http/pprof"
 )
 
 const TraceIO = false
@@ -372,19 +373,12 @@ func (a *GitAnnex) startResponder(helper Helper, jobNum int, wg *sync.WaitGroup,
 
 func (a *GitAnnex) mainloop(helper Helper) (oe error) {
 	if Profile {
-		f, err := os.Create(fmt.Sprintf("/tmp/annex-%d.profile.out", os.Getpid()))
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := f.Close(); err != nil {
-				oe = multierror.Append(oe, err)
+		go func() {
+			err := http.ListenAndServe("localhost:8000", nil)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error in profiling server: %v", err)
 			}
 		}()
-		if err := pprof.StartCPUProfile(f); err != nil {
-			return err
-		}
-		defer pprof.StopCPUProfile()
 	}
 	if err := a.writePlainLine("VERSION 1"); err != nil {
 		return err
