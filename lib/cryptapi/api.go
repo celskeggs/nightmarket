@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"filippo.io/age"
 	"github.com/celskeggs/nightmarket/lib/demonapi"
