@@ -173,6 +173,19 @@ func promptConfig(prompt func(string) (string, error)) (cryptapi.ClerkConfig, er
 	if err != nil {
 		return cryptapi.ClerkConfig{}, err
 	}
+	factor, err := prompt("Work Factor (10-20 recommended)> ")
+	if err != nil {
+		return cryptapi.ClerkConfig{}, err
+	}
+	factorNum, err := strconv.ParseUint(factor, 10, 64)
+	if err != nil {
+		return cryptapi.ClerkConfig{}, err
+	}
+	// 22 is the maximum that age will decrypt by default
+	if factorNum < 1 || factorNum > 22 {
+		return cryptapi.ClerkConfig{}, errors.New("invalid factor")
+	}
+	config.WorkFactor = int(factorNum)
 	if _, err := clerk.ListObjects(); err != nil {
 		return cryptapi.ClerkConfig{}, err
 	}
