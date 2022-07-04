@@ -20,7 +20,7 @@ func Main() {
 		}
 	} else {
 		_, _ = fmt.Fprintf(os.Stderr, "usage: %s init <annex-directory>\n", os.Args[0])
-		_, _ = fmt.Fprintf(os.Stderr, "usage: %s repair <config.json>\n", os.Args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "usage: %s repair\n", os.Args[0])
 		os.Exit(1)
 	}
 }

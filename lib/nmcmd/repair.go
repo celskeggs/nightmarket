@@ -90,7 +90,7 @@ func repairRepo() error {
 		}
 	} else {
 		fmt.Printf(
-			"Successfully deleted %d objects! Rerun repair and an upload to confirm this was performed correctly.",
+			"Successfully deleted %d objects! Rerun repair and an upload to confirm this was performed correctly.\n",
 			len(output.Deleted))
 	}
 	return nil
