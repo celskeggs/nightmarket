@@ -1,4 +1,4 @@
-package nminit
+package nmcmd
 
 import (
 	"encoding/json"
@@ -95,7 +95,7 @@ func validateGitConfig(prompt func(string) (string, error)) error {
 	return nil
 }
 
-func getOrCreateConfigDir() (string, error) {
+func getConfigDir(create bool) (string, error) {
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -104,17 +104,18 @@ func getOrCreateConfigDir() (string, error) {
 		return "", errors.New("empty $HOME path")
 	}
 	configDir := path.Join(homedir, ".nightmarket")
-	err = os.Mkdir(configDir, 0755)
-	if errors.Is(err, fs.ErrExist) {
-		stat, err := os.Stat(configDir)
-		if err != nil {
+	if create {
+		err = os.Mkdir(configDir, 0755)
+		if err != nil && !errors.Is(err, fs.ErrExist) {
 			return "", err
 		}
-		if !stat.IsDir() {
-			return "", fmt.Errorf("expected %q to be a directory", configDir)
-		}
-	} else if err != nil {
+	}
+	stat, err := os.Stat(configDir)
+	if err != nil {
 		return "", err
+	}
+	if !stat.IsDir() {
+		return "", fmt.Errorf("expected %q to be a directory", configDir)
 	}
 	return configDir, nil
 }
@@ -306,7 +307,7 @@ func initRepo(repoPath string) error {
 	if err := validateEnvPath(); err != nil {
 		return err
 	}
-	configDir, err := getOrCreateConfigDir()
+	configDir, err := getConfigDir(true)
 	if err != nil {
 		return err
 	}
@@ -338,16 +339,4 @@ func initRepo(repoPath string) error {
 	}
 	fmt.Printf("Annex at %q is ready to use!\n", repoPath)
 	return nil
-}
-
-func Main() {
-	if len(os.Args) != 3 || os.Args[1] != "init" {
-		_, _ = fmt.Fprintf(os.Stderr, "usage: %s init <annex-directory>\n", os.Args[0])
-		os.Exit(1)
-	}
-	err := initRepo(os.Args[2])
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%s: %v\n", os.Args[0], err)
-		os.Exit(1)
-	}
 }

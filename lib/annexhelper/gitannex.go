@@ -110,6 +110,24 @@ type ObjectMetadata struct {
 	ObjectPath string
 }
 
+func ListDuplicates(objects []string) (map[string][]string, error) {
+	objMap := map[string][]string{}
+	for _, objectPath := range objects {
+		_, infix, _, err := cryptapi.SplitPath(objectPath)
+		if err != nil {
+			return nil, err
+		}
+		objMap[infix] = append(objMap[infix], objectPath)
+	}
+	duplicates := map[string][]string{}
+	for infix, objs := range objMap {
+		if len(objs) >= 2 {
+			duplicates[infix] = objs
+		}
+	}
+	return duplicates, nil
+}
+
 func generateObjectMap(objects []string) (map[string]ObjectMetadata, error) {
 	objMap := map[string]ObjectMetadata{}
 	for _, objectPath := range objects {
