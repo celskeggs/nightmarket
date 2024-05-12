@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -17,9 +18,10 @@ import (
 )
 
 type Reply struct {
-	URL      string      `json:"url"`
-	Headers  http.Header `json:"headers"`
-	Filename string      `json:"created-filename,omitempty"`
+	URL       string      `json:"url"`
+	Headers   http.Header `json:"headers"`
+	Filename  string      `json:"created-filename,omitempty"`
+	LogOutput string      `json:"log-output"`
 }
 
 type ReplyError struct {
@@ -75,12 +77,15 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 		return response(ReplyError{"missing access or secret key"})
 	}
 	var r Reply
-	fmt.Printf("Access is granted... constructing session.\n")
+	loggingBuffer := strings.Builder{}
+	logger := log.New(&loggingBuffer, "", log.LstdFlags)
+	logger.Printf("Access is granted... constructing session.\n")
 	spacesSession, err := session.NewSession(&aws.Config{
 		Credentials: credentials.NewStaticCredentials(accessKey, secretKey, ""),
 		Endpoint:    aws.String(spaceEndpoint),
 		Region:      aws.String(spaceRegion),
 		LogLevel:    aws.LogLevel(aws.LogDebugWithSigning),
+		Logger:      aws.LoggerFunc(logger.Println),
 	})
 	if err != nil {
 		return response(ReplyError{"spaces error: " + err.Error()})
@@ -130,5 +135,6 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 	if err != nil {
 		return response(ReplyError{"presign error: " + err.Error()})
 	}
+	r.LogOutput = loggingBuffer.String()
 	return response(r)
 }
