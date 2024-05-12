@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -74,10 +75,12 @@ func Main(in map[string]interface{}) (out map[string]interface{}) {
 		return response(ReplyError{"missing access or secret key"})
 	}
 	var r Reply
+	fmt.Printf("Access is granted... constructing session.\n")
 	spacesSession, err := session.NewSession(&aws.Config{
 		Credentials: credentials.NewStaticCredentials(accessKey, secretKey, ""),
 		Endpoint:    aws.String(spaceEndpoint),
 		Region:      aws.String(spaceRegion),
+		LogLevel:    aws.LogLevel(aws.LogDebugWithSigning),
 	})
 	if err != nil {
 		return response(ReplyError{"spaces error: " + err.Error()})
